@@ -23,6 +23,8 @@ export interface IUser extends Document {
   password?: string;
   avatar?: string;
   provider: string;
+  /** Rotated for YAI-linked accounts to invalidate active bearer tokens at logout. */
+  yaiSessionVersion?: string;
   role?: string;
   googleId?: string;
   facebookId?: string;

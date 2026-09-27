@@ -1,5 +1,12 @@
 const express = require('express');
-const { createSetBalanceConfig, forceRefreshCloudFrontAuthCookies } = require('@librechat/api');
+const {
+  createSetBalanceConfig,
+  forceRefreshCloudFrontAuthCookies,
+  redeemYaiTicket,
+  ensureYaiLibreChatUser,
+  isValidYaiServiceSecret,
+  revokeYaiUserSessions,
+} = require('@librechat/api');
 const {
   resetPasswordRequestController,
   resetPasswordController,
@@ -17,7 +24,9 @@ const {
 const { verify2FAWithTempToken } = require('~/server/controllers/auth/TwoFactorAuthController');
 const { logoutController } = require('~/server/controllers/auth/LogoutController');
 const { loginController } = require('~/server/controllers/auth/LoginController');
-const { findBalanceByUser, upsertBalanceFields } = require('~/models');
+const db = require('~/models');
+const { findBalanceByUser, upsertBalanceFields } = db;
+const { setAuthTokens } = require('~/server/services/AuthService');
 const { getAppConfig } = require('~/server/services/Config');
 const middleware = require('~/server/middleware');
 
@@ -28,6 +37,51 @@ const setBalanceConfig = createSetBalanceConfig({
 });
 
 const router = express.Router();
+router.post('/yai/handoff', async (req, res) => {
+  const { ticket, accountId } = req.body ?? {};
+  try {
+    const identity = await redeemYaiTicket({
+      ticket,
+      accountId,
+      apiBaseUrl: process.env.YAI_API_BASE_URL,
+      serviceSecret: process.env.YAI_LIBRECHAT_SERVICE_KEY,
+    });
+    await ensureYaiLibreChatUser(accountId, identity, {
+      findById: (id) => db.findUser({ _id: id }),
+      create: (user) => db.createUser(user, undefined, true, true),
+      update: (id, user) => db.updateUser(id, user),
+    });
+    await setAuthTokens(accountId, res, null, req);
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'YAI sign-in failed';
+    const status = /rejected \((400|401|403|404)\)/.test(message) ? 401 : 502;
+    return res.status(status).json({ error: 'YAI sign-in failed' });
+  }
+});
+
+router.post('/yai/revoke', async (req, res) => {
+  if (
+    !isValidYaiServiceSecret(
+      req.get('x-yai-librechat-service-key'),
+      process.env.YAI_LIBRECHAT_SERVICE_KEY,
+    )
+  ) {
+    return res.sendStatus(401);
+  }
+  try {
+    await revokeYaiUserSessions(req.body?.userId, {
+      findLinkedAccounts: (userId) =>
+        db.findUsers({ idOnTheSource: { $regex: `^yai:${userId}:` } }, '_id'),
+      rotateSessionVersion: (accountId, version) =>
+        db.updateUser(accountId, { yaiSessionVersion: version }),
+      deleteAllSessions: (accountId) => db.deleteAllUserSessions(accountId),
+    });
+    return res.sendStatus(204);
+  } catch {
+    return res.sendStatus(500);
+  }
+});
 const getCloudFrontAuthCookieRefreshResult = (req, res) => {
   const warmedResult = req.cloudFrontAuthCookieRefreshResult;
   if (warmedResult && (warmedResult.attempted || !warmedResult.enabled)) {

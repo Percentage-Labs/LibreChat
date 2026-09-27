@@ -56,6 +56,7 @@ interface ChatFormProps {
   index: number;
   placeholder?: string;
   project?: TChatProject;
+  yaiLanding: boolean;
   /** From ChatContext: individual values so memo can compare them */
   files: Map<string, ExtendedFile>;
   setFiles: FileSetter;
@@ -71,6 +72,7 @@ const ChatForm = memo(function ChatForm({
   index,
   placeholder,
   project,
+  yaiLanding,
   files,
   setFiles,
   conversation,
@@ -98,6 +100,8 @@ const ChatForm = memo(function ChatForm({
   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
   const centerFormOnLanding = useRecoilValue(store.centerFormOnLanding);
   const isTemporary = useRecoilValue(store.isTemporary);
+  const isYaiEmbedded = import.meta.env.VITE_YAI_EMBEDDED === 'true';
+  const isYaiLanding = isYaiEmbedded && yaiLanding;
 
   const [badges, setBadges] = useRecoilState(store.chatBadges);
   const [isEditingBadges, setIsEditingBadges] = useRecoilState(store.isEditingBadges);
@@ -505,14 +509,16 @@ const ChatForm = memo(function ChatForm({
         return submitMessage(data);
       })}
       className={cn(
-        'mx-auto flex w-full flex-row gap-3 transition-[max-width] duration-300 sm:px-2',
-        maximizeChatSpace ? 'max-w-full' : 'md:max-w-3xl xl:max-w-4xl',
-        centerFormOnLanding &&
+        'mx-auto flex w-full flex-row gap-3 transition-[max-width] duration-300',
+        maximizeChatSpace ? 'max-w-full' : isYaiLanding ? 'max-w-4xl' : 'md:max-w-3xl xl:max-w-4xl',
+        isYaiLanding ? 'mb-0' : 'sm:px-2',
+        !isYaiLanding &&
+          (centerFormOnLanding &&
           (conversationId == null || conversationId === Constants.NEW_CONVO) &&
           !isSubmitting &&
           conversation?.messages?.length === 0
-          ? 'transition-all duration-200 sm:mb-28'
-          : 'sm:mb-10',
+            ? 'transition-all duration-200 sm:mb-28'
+            : 'sm:mb-10'),
       )}
     >
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
@@ -559,11 +565,14 @@ const ChatForm = memo(function ChatForm({
             <div
               onClick={handleContainerClick}
               className={cn(
-                'relative flex w-full flex-grow flex-col overflow-hidden rounded-t-3xl border pb-4 text-text-primary transition-all duration-200 sm:rounded-3xl sm:pb-0',
-                isTextAreaFocused ? 'shadow-lg' : 'shadow-md',
-                isTemporary
-                  ? 'border-violet-800/60 bg-violet-950/10'
-                  : 'border-border-light bg-surface-chat',
+                isYaiLanding
+                  ? 'relative flex min-h-14 w-full flex-grow flex-row items-center overflow-hidden rounded-xl border border-border-light bg-surface-chat px-2 text-text-primary'
+                  : 'relative flex w-full flex-grow flex-col overflow-hidden rounded-t-3xl border pb-4 text-text-primary transition-all duration-200 sm:rounded-3xl sm:pb-0',
+                !isYaiLanding && (isTextAreaFocused ? 'shadow-lg' : 'shadow-md'),
+                !isYaiLanding &&
+                  (isTemporary
+                    ? 'border-violet-800/60 bg-violet-950/10'
+                    : 'border-border-light bg-surface-chat'),
               )}
             >
               {project ? <ProjectLandingChip project={project} /> : null}
@@ -592,9 +601,24 @@ const ChatForm = memo(function ChatForm({
                 setFilesLoading={setFilesLoading}
               />
               {endpoint && (
-                <div className={cn('flex', isRTL ? 'flex-row-reverse' : 'flex-row')}>
+                <div
+                  className={cn(
+                    'flex',
+                    isYaiLanding && 'w-full min-w-0 items-center gap-2',
+                    isRTL ? 'flex-row-reverse' : 'flex-row',
+                  )}
+                >
+                  {isYaiLanding && (
+                    <AttachFileChat
+                      conversation={conversation}
+                      disableInputs={disableInputs}
+                      files={files}
+                      setFiles={setFiles}
+                      setFilesLoading={setFilesLoading}
+                    />
+                  )}
                   <div
-                    className="relative flex-1"
+                    className={cn('relative flex-1', isYaiLanding && 'min-w-0')}
                     style={
                       isCollapsed
                         ? {
@@ -638,92 +662,117 @@ const ChatForm = memo(function ChatForm({
                       className={cn(
                         baseClasses,
                         removeFocusRings,
-                        'scrollbar-hover transition-[max-height] duration-200 disabled:cursor-not-allowed',
+                        isYaiLanding
+                          ? 'px-0 py-2.5 text-sm md:py-2.5'
+                          : 'scrollbar-hover transition-[max-height] duration-200 disabled:cursor-not-allowed',
                       )}
                     />
                   </div>
-                  <div className="flex flex-col items-start justify-start pr-2.5 pt-1.5">
-                    <CollapseChat
-                      isCollapsed={isCollapsed}
-                      isScrollable={isMoreThanThreeRows}
-                      setIsCollapsed={setIsCollapsed}
+                  {isYaiLanding && endpoint && (
+                    <SendButton
+                      ref={submitButtonRef}
+                      control={methods.control}
+                      fileCount={submittableFileCount}
+                      variant="yaiLanding"
+                      disabled={
+                        filesLoading ||
+                        disableInputs ||
+                        isNotAppendable ||
+                        answerMode.composerLocked ||
+                        (isSubmitting && !answerMode.composerAnswers)
+                      }
                     />
-                  </div>
-                </div>
-              )}
-              <div
-                className={cn(
-                  '@container items-between flex gap-2 pb-2',
-                  isRTL ? 'flex-row-reverse' : 'flex-row',
-                )}
-              >
-                <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
-                  <AttachFileChat
-                    conversation={conversation}
-                    disableInputs={disableInputs}
-                    files={files}
-                    setFiles={setFiles}
-                    setFilesLoading={setFilesLoading}
-                  />
-                </div>
-                <BadgeRow
-                  showEphemeralBadges={
-                    !!endpoint &&
-                    !hideBadgeRow &&
-                    !isAgentsEndpoint(endpoint) &&
-                    !isAssistantsEndpoint(endpoint)
-                  }
-                  isSubmitting={isSubmitting}
-                  conversationId={conversationId}
-                  specName={conversation?.spec}
-                  onChange={setBadges}
-                  isInChat={
-                    Array.isArray(conversation?.messages) && conversation.messages.length >= 1
-                  }
-                />
-                <div className="mx-auto flex" />
-                <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
-                {SpeechToText && (
-                  <AudioRecorder
-                    methods={methods}
-                    ask={submitMessage}
-                    disabled={disableInputs || isNotAppendable}
-                    isSubmitting={isSubmitting}
-                  />
-                )}
-                {steering.duringRunActive &&
-                  steering.canControlGeneration &&
-                  (textValue?.trim() ?? '') !== '' && (
-                    <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
-                      <InterruptSteerButton
-                        steering={steering}
-                        getText={() => methods.getValues('text')}
-                        onConsumed={() => methods.reset()}
-                        disabled={filesLoading}
+                  )}
+                  {!isYaiLanding && (
+                    <div className="flex flex-col items-start justify-start pr-2.5 pt-1.5">
+                      <CollapseChat
+                        isCollapsed={isCollapsed}
+                        isScrollable={isMoreThanThreeRows}
+                        setIsCollapsed={setIsCollapsed}
                       />
                     </div>
                   )}
-                <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
-                  {isSubmitting &&
-                  (showStopButton || steering.duringRunActive) &&
-                  !answerMode.composerAnswers
-                    ? duringRunSlot
-                    : endpoint && (
-                        <SendButton
-                          ref={submitButtonRef}
-                          control={methods.control}
-                          fileCount={submittableFileCount}
-                          disabled={
-                            filesLoading ||
-                            disableInputs ||
-                            isNotAppendable ||
-                            answerMode.composerLocked ||
-                            (isSubmitting && !answerMode.composerAnswers)
-                          }
-                        />
-                      )}
                 </div>
-              </div>
+              )}
+              {!isYaiLanding && (
+                <div
+                  className={cn(
+                    '@container items-between flex gap-2 pb-2',
+                    isRTL ? 'flex-row-reverse' : 'flex-row',
+                  )}
+                >
+                  <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
+                    <AttachFileChat
+                      conversation={conversation}
+                      disableInputs={disableInputs}
+                      files={files}
+                      setFiles={setFiles}
+                      setFilesLoading={setFilesLoading}
+                    />
+                  </div>
+                  <BadgeRow
+                    showEphemeralBadges={
+                      !!endpoint &&
+                      !hideBadgeRow &&
+                      !isAgentsEndpoint(endpoint) &&
+                      !isAssistantsEndpoint(endpoint)
+                    }
+                    isSubmitting={isSubmitting}
+                    conversationId={conversationId}
+                    specName={conversation?.spec}
+                    onChange={setBadges}
+                    isInChat={
+                      Array.isArray(conversation?.messages) && conversation.messages.length >= 1
+                    }
+                  />
+                  <div className="mx-auto flex" />
+                  <TokenUsage
+                    index={index}
+                    conversation={conversation}
+                    isSubmitting={isSubmitting}
+                  />
+                  {SpeechToText && (
+                    <AudioRecorder
+                      methods={methods}
+                      ask={submitMessage}
+                      disabled={disableInputs || isNotAppendable}
+                      isSubmitting={isSubmitting}
+                    />
+                  )}
+                  {steering.duringRunActive &&
+                    steering.canControlGeneration &&
+                    (textValue?.trim() ?? '') !== '' && (
+                      <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
+                        <InterruptSteerButton
+                          steering={steering}
+                          getText={() => methods.getValues('text')}
+                          onConsumed={() => methods.reset()}
+                          disabled={filesLoading}
+                        />
+                      </div>
+                    )}
+                  <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
+                    {isSubmitting &&
+                    (showStopButton || steering.duringRunActive) &&
+                    !answerMode.composerAnswers
+                      ? duringRunSlot
+                      : endpoint && (
+                          <SendButton
+                            ref={submitButtonRef}
+                            control={methods.control}
+                            fileCount={submittableFileCount}
+                            disabled={
+                              filesLoading ||
+                              disableInputs ||
+                              isNotAppendable ||
+                              answerMode.composerLocked ||
+                              (isSubmitting && !answerMode.composerAnswers)
+                            }
+                          />
+                        )}
+                  </div>
+                </div>
+              )}
               {TextToSpeech && automaticPlayback && <StreamAudio index={index} />}
             </div>
           </div>
@@ -743,10 +792,12 @@ function ChatFormWrapper({
   index = 0,
   placeholder,
   project,
+  yaiLanding = false,
 }: {
   index?: number;
   placeholder?: string;
   project?: TChatProject;
+  yaiLanding?: boolean;
 }) {
   const {
     files,
@@ -808,6 +859,7 @@ function ChatFormWrapper({
       index={index}
       placeholder={placeholder}
       project={project}
+      yaiLanding={yaiLanding}
       files={files}
       setFiles={setFiles}
       conversation={stableConversation}

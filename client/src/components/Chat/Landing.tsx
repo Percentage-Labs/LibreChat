@@ -149,6 +149,20 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     ? localize('com_ui_temporary')
     : (resolvedWelcome ?? scheduledGreeting);
 
+  if (import.meta.env.VITE_YAI_EMBEDDED === 'true') {
+    return (
+      <section className="mb-6 flex flex-col items-center gap-2 text-center">
+        <img src="/assets/menu-logo-dark.svg" alt="" aria-hidden="true" width={78} height={32} />
+        <h2 className="text-2xl font-semibold leading-9 text-text-primary sm:text-3xl">
+          {localize('com_yai_chat_title')}
+        </h2>
+        <p className="max-w-md text-sm text-text-secondary">
+          {localize('com_yai_chat_description')}
+        </p>
+      </section>
+    );
+  }
+
   return (
     <div
       className={`flex h-full transform-gpu flex-col items-center justify-center pb-16 transition-all duration-200 ${centerFormOnLanding ? 'max-h-full sm:max-h-0' : 'max-h-full'} ${getDynamicMargin}`}

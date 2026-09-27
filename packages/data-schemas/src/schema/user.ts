@@ -61,6 +61,9 @@ const userSchema: Schema<IUser> = new Schema<IUser>(
       required: true,
       default: 'local',
     },
+    yaiSessionVersion: {
+      type: String,
+    },
     role: {
       type: String,
       default: SystemRoles.USER,

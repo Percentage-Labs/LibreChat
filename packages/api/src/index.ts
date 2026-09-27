@@ -1,4 +1,5 @@
 export * from './app';
+export * from './yai/handoff';
 export * from './credentials';
 /* Artifacts */
 export * from './artifacts';

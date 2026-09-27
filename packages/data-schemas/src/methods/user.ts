@@ -571,6 +571,9 @@ export function createUserMethods(
         username: user.username,
         provider: user.provider,
         email: user.email,
+        ...(user.provider === 'yai' && user.yaiSessionVersion
+          ? { yaiSessionVersion: user.yaiSessionVersion }
+          : {}),
       },
       secret: process.env.JWT_SECRET,
       expirationTime: expires / 1000,

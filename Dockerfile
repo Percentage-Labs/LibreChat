@@ -18,6 +18,8 @@ RUN uv --version
 ARG NODE_MAX_OLD_SPACE_SIZE=6144
 ARG NPM_CI_TIMEOUT_SECONDS=1500
 ARG NPM_CI_ATTEMPTS=2
+ARG VITE_YAI_EMBEDDED=false
+ENV VITE_YAI_EMBEDDED=${VITE_YAI_EMBEDDED}
 
 RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
@@ -56,8 +58,8 @@ COPY --chown=node:node . .
 
 RUN \
     # React client build with configurable memory
-    NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
-    npm prune --production; \
+    NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend && \
+    npm prune --production && \
     npm cache clean --force
 
 # Optional build metadata surfaced in Settings -> About for support triage.

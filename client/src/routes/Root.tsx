@@ -51,6 +51,7 @@ function KeyboardShortcutsProvider() {
 }
 
 export default function Root() {
+  const yaiEmbedded = import.meta.env.VITE_YAI_EMBEDDED === 'true';
   const [showTerms, setShowTerms] = useState(false);
   const [bannerHeight, setBannerHeight] = useState(0);
   /** Shared with the drawer so the two agree on the breakpoint-transition frame. */
@@ -156,7 +157,7 @@ export default function Root() {
                     } as React.CSSProperties
                   }
                 >
-                  <UnifiedSidebar />
+                  {!yaiEmbedded && <UnifiedSidebar />}
                   <div
                     ref={paneRef}
                     /** Focus target of last resort when the drawer closes on a

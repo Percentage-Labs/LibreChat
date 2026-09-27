@@ -47,6 +47,13 @@ const jwtLogin = () =>
           });
           return;
         }
+        if (
+          user?.provider === 'yai' &&
+          (!payload?.yaiSessionVersion || payload.yaiSessionVersion !== user.yaiSessionVersion)
+        ) {
+          done(null, false, { message: 'YAI chat session has been revoked' });
+          return;
+        }
         if (user) {
           user.id = user._id.toString();
           /** Absent on the full doc means local user; null skips getUserPrincipals' fallback lookup */

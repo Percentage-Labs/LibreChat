@@ -37,6 +37,7 @@ function LoadingSpinner() {
 }
 
 function ChatView({ index = 0, project }: { index?: number; project?: TChatProject }) {
+  const isYaiEmbedded = import.meta.env.VITE_YAI_EMBEDDED === 'true';
   const { conversationId } = useParams();
   const localize = useLocalize();
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
@@ -112,7 +113,9 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   const chatFormPlaceholder =
     isProjectLandingPage && project
       ? localize('com_ui_new_chat_in_project', { name: project.name })
-      : undefined;
+      : isYaiEmbedded && isLandingPage
+        ? localize('com_yai_chat_placeholder')
+        : undefined;
 
   // Recoil conversation can lag the route during navigation; only announce a
   // title that belongs to the conversation currently in the URL.
@@ -127,6 +130,21 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
    * Human continuation is a separate future fork/promotion flow, never an
    * in-place mutation of this canonical child transcript. */
   const isSubagentThreadReadOnly = activeSubagentThread != null;
+  const composerContent = isSubagentThreadReadOnly ? (
+    <div
+      className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"
+      role="note"
+    >
+      {localize('com_ui_subagent_thread_read_only')}
+    </div>
+  ) : (
+    <ChatForm
+      index={index}
+      placeholder={chatFormPlaceholder}
+      project={isProjectLandingPage ? project : undefined}
+      yaiLanding={isYaiEmbedded && isLandingPage}
+    />
+  );
 
   return (
     <ChatFormProvider {...methods}>
@@ -135,16 +153,20 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
           <Presentation>
             <div className="relative flex h-full w-full flex-col">
               <h1 className="sr-only">{pageHeading}</h1>
-              <Header
-                parentConversationId={parentConversationId}
-                readOnly={isSubagentThreadReadOnly}
-              />
+              {!(isYaiEmbedded && isLandingPage) && (
+                <Header
+                  parentConversationId={parentConversationId}
+                  readOnly={isSubagentThreadReadOnly}
+                />
+              )}
               <>
                 <div
                   className={cn(
                     'flex flex-col',
                     isLandingPage
-                      ? 'flex-1 items-center justify-end sm:justify-center'
+                      ? isYaiEmbedded
+                        ? 'min-h-0 flex-1 items-center justify-center overflow-y-auto px-4 sm:px-6'
+                        : 'flex-1 items-center justify-end sm:justify-center'
                       : 'h-full overflow-y-auto',
                   )}
                 >
@@ -153,28 +175,27 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                     className={cn(
                       'w-full',
                       !isLandingPage && 'scrollbar-gutter-spacer',
-                      isLandingPage && 'max-w-3xl transition-all duration-200 xl:max-w-4xl',
+                      isLandingPage &&
+                        (isYaiEmbedded
+                          ? 'max-w-4xl'
+                          : 'max-w-3xl transition-all duration-200 xl:max-w-4xl'),
                     )}
                   >
-                    {isLandingPage && <ConversationStarters />}
-                    {isSubagentThreadReadOnly ? (
-                      <div
-                        className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"
-                        role="note"
-                      >
-                        {localize('com_ui_subagent_thread_read_only')}
-                      </div>
+                    {isYaiEmbedded && isLandingPage ? (
+                      <>
+                        {composerContent}
+                        <ConversationStarters />
+                      </>
                     ) : (
-                      <ChatForm
-                        index={index}
-                        placeholder={chatFormPlaceholder}
-                        project={isProjectLandingPage ? project : undefined}
-                      />
+                      <>
+                        {isLandingPage && <ConversationStarters />}
+                        {composerContent}
+                      </>
                     )}
                     {!isLandingPage && <Footer />}
                   </div>
                 </div>
-                {isLandingPage && <Footer />}
+                {isLandingPage && !isYaiEmbedded && <Footer />}
               </>
             </div>
           </Presentation>

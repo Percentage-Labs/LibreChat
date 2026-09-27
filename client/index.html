@@ -3,6 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <base href="/" />
+    <script>
+      if (window.location.pathname.startsWith('/chat-runtime/')) {
+        document.querySelector('base')?.setAttribute('href', '/chat-runtime/');
+      }
+    </script>
     <meta name="theme-color" content="#171717" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
