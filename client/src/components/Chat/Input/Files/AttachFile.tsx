@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { Plus } from 'lucide-react';
 import { FileUpload, TooltipAnchor, AttachmentIcon } from '@librechat/client';
 import type { TConversation } from 'librechat-data-provider';
 import type { ExtendedFile, FileSetter } from '~/common';
@@ -65,7 +66,11 @@ const AttachFile = ({
             }}
           >
             <div className="flex w-full items-center justify-center gap-2">
-              <AttachmentIcon />
+              {import.meta.env.VITE_YAI_EMBEDDED === 'true' ? (
+                <Plus size={18} />
+              ) : (
+                <AttachmentIcon />
+              )}
             </div>
           </button>
         }

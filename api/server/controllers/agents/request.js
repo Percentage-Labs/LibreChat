@@ -1737,7 +1737,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
       }
       const titleEligible =
         addTitle && parentMessageId === Constants.NO_PARENT && isNewConvo && !req.body?.isTemporary;
-      const emitTitleEvent = ({ conversationId: titleConversationId, title }) => {
+      const emitTitleEvent = ({ conversationId: titleConversationId, title, persisted }) => {
         titleEventPromise = (async () => {
           if (!acceptsTitleEvents || titleAbortController.signal.aborted) {
             return;
@@ -1756,6 +1756,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
               data: {
                 conversationId: titleConversationId,
                 title,
+                ...(persisted ? { persisted: true } : {}),
               },
             },
             { expectedCreatedAt: jobCreatedAt },

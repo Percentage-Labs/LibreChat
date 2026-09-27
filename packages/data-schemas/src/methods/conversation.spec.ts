@@ -77,6 +77,43 @@ afterAll(async () => {
 
 const saveConvo = (...args: Parameters<ConversationMethods['saveConvo']>) =>
   methods.saveConvo(...args) as Promise<IConversation | null>;
+
+describe('conditional automatic conversation titles', () => {
+  it('names an untitled conversation but preserves a manual name and cannot create or cross accounts', async () => {
+    const userId = new mongoose.Types.ObjectId().toString();
+    const conversationId = uuidv4();
+    await saveConvo({ userId }, { conversationId, title: 'New Chat' });
+    const named = await saveConvo(
+      { userId },
+      { conversationId, title: 'Planning a garden' },
+      { onlyIfUntitled: true },
+    );
+    expect(named?.title).toBe('Planning a garden');
+    await saveConvo({ userId }, { conversationId, title: 'My custom title' });
+    expect(
+      await saveConvo(
+        { userId },
+        { conversationId, title: 'Late generated title' },
+        { onlyIfUntitled: true },
+      ),
+    ).toBeNull();
+    expect((await Conversation.findOne({ conversationId }))?.title).toBe('My custom title');
+    expect(
+      await saveConvo(
+        { userId },
+        { conversationId: uuidv4(), title: 'Missing conversation' },
+        { onlyIfUntitled: true },
+      ),
+    ).toBeNull();
+    expect(
+      await saveConvo(
+        { userId: new mongoose.Types.ObjectId().toString() },
+        { conversationId, title: 'Wrong account' },
+        { onlyIfUntitled: true },
+      ),
+    ).toBeNull();
+  });
+});
 const setConvoPinned = (...args: Parameters<ConversationMethods['setConvoPinned']>) =>
   methods.setConvoPinned(...args);
 const getConvo = (...args: Parameters<ConversationMethods['getConvo']>) =>

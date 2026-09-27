@@ -53,6 +53,7 @@ import { useAuthContext } from '~/hooks/AuthContext';
 import { MESSAGE_UPDATE_INTERVAL } from '~/common';
 import { useLiveAnnouncer } from '~/Providers';
 import store from '~/store';
+import { postYaiEvent } from '~/utils/yai';
 
 type TSyncData = {
   sync: boolean;
@@ -68,6 +69,7 @@ type TTitleEvent = {
   data?: {
     conversationId?: string;
     title?: string;
+    persisted?: boolean;
   };
 };
 
@@ -625,6 +627,19 @@ export default function useEventHandlers({
       }
 
       const { conversationId, parentMessageId } = userMessage;
+      if (
+        !isTemporary &&
+        !isRegenerate &&
+        parentMessageId === Constants.NO_PARENT &&
+        conversationId
+      ) {
+        postYaiEvent({
+          type: 'yai-librechat-conversation',
+          conversationId,
+          title: submission.conversation?.title || 'New Chat',
+          persisted: false,
+        });
+      }
       lastAnnouncementTimeRef.current = Date.now();
       announcePolite({
         message: 'start',
@@ -700,6 +715,13 @@ export default function useEventHandlers({
       if (!conversationId || !hasRealTitle(title)) {
         return;
       }
+
+      postYaiEvent({
+        type: 'yai-librechat-conversation',
+        conversationId,
+        title,
+        persisted: event.data?.persisted === true,
+      });
 
       queryClient.setQueryData<TConversation>([QueryKeys.conversation, conversationId], (convo) =>
         convo ? { ...convo, title } : convo,

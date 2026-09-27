@@ -153,9 +153,9 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     return (
       <section className="mb-6 flex flex-col items-center gap-2 text-center">
         <img src="/assets/menu-logo-dark.svg" alt="" aria-hidden="true" width={78} height={32} />
-        <h2 className="text-2xl font-semibold leading-9 text-text-primary sm:text-3xl">
+        <h1 className="text-2xl font-semibold leading-9 text-text-primary sm:text-3xl">
           {localize('com_yai_chat_title')}
-        </h2>
+        </h1>
         <p className="max-w-md text-sm text-text-secondary">
           {localize('com_yai_chat_description')}
         </p>

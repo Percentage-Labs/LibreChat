@@ -60,7 +60,15 @@ endpoints:
         default:
           - 'qwen3.5-9b'
         fetch: false
-      titleConvo: false
+      titleConvo: true
+      titleModel: 'current_model'
+      titleMethod: 'completion'
+      titleTiming: 'immediate'
+      titlePrompt: |-
+        Create a concise topic title of 3 to 7 words in the language of the user message. Return only the title, without quotation marks or commentary.
+
+        Conversation:
+        {convo}
       summarize: false
       modelDisplayLabel: 'YAI'
       addParams:

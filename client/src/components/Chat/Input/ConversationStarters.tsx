@@ -87,7 +87,7 @@ const ConversationStarters = () => {
       <button
         key={text}
         onClick={() => sendConversationStarter(text)}
-        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border-light bg-surface-primary px-2.5 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary focus-visible:ring-offset-2"
+        className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-light bg-surface-primary px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary focus-visible:ring-offset-2"
       >
         <Sparkles className="size-3.5 shrink-0 text-link" aria-hidden="true" />
         <span>{text}</span>
@@ -95,13 +95,8 @@ const ConversationStarters = () => {
     );
 
     return (
-      <div className="mt-3 flex w-full flex-col items-center gap-2">
-        <div className="flex w-full flex-wrap items-center justify-center gap-2">
-          {starterTexts.slice(0, 4).map(renderStarter)}
-        </div>
-        <div className="flex items-center justify-center">
-          {starterTexts.slice(4).map(renderStarter)}
-        </div>
+      <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-2">
+        {starterTexts.map(renderStarter)}
       </div>
     );
   }

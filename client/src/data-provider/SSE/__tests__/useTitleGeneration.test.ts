@@ -26,6 +26,10 @@ const mockSetQueryData = jest.fn();
 const mockRemoveQueries = jest.fn();
 const mockResetQueries = jest.fn();
 const mockUpdateConvoInAllQueries = jest.fn();
+const mockPostYaiEvent = jest.fn();
+jest.mock('~/utils/yai', () => ({
+  postYaiEvent: (...args: unknown[]) => mockPostYaiEvent(...args),
+}));
 
 jest.mock('@tanstack/react-query', () => ({
   useQuery: jest.fn(() => ({ data: { activeJobIds: mockActiveJobIds } })),
@@ -139,6 +143,12 @@ describe('useTitleGeneration — result handling', () => {
       expect.any(Function),
     );
     expect(mockUpdateConvoInAllQueries).toHaveBeenCalled();
+    expect(mockPostYaiEvent).toHaveBeenCalledWith({
+      type: 'yai-librechat-conversation',
+      conversationId: 'conv-ok',
+      title: 'Quantum Chat',
+      persisted: false,
+    });
 
     const call = mockSetQueryData.mock.calls.find(
       ([key]) => JSON.stringify(key) === JSON.stringify(['conversation', 'conv-ok']),

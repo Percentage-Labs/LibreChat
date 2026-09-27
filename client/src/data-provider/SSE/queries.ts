@@ -5,6 +5,7 @@ import type { Agents, TConversation, TPendingSteer } from 'librechat-data-provid
 import { isNotFoundError, updateConvoInAllQueries, setDocumentTitle } from '~/utils';
 import { generationProtocolHeaders, withGenerationProtocolQuery } from './protocol';
 import { useGetStartupConfig } from '../Endpoints';
+import { postYaiEvent } from '~/utils/yai';
 
 export interface StreamStatusResponse {
   /** Exact protocol selected by the job. Missing/1 is always legacy. */
@@ -175,6 +176,12 @@ export function useTitleGeneration(enabled = true) {
 
       if (titleQuery.isSuccess && titleQuery.data) {
         const { title } = titleQuery.data;
+        postYaiEvent({
+          type: 'yai-librechat-conversation',
+          conversationId,
+          title,
+          persisted: false,
+        });
         queryClient.setQueryData(
           [QueryKeys.conversation, conversationId],
           (convo: TConversation | undefined) => (convo ? { ...convo, title } : convo),

@@ -167,14 +167,21 @@ export default function Root() {
                     style={{
                       /** A percentage of the pane's own width, so it tracks the
                        *  drawer without a literal and survives rotation. */
-                      transform: isSmallScreen && sidebarExpanded ? MOBILE_PANE_SHIFT : 'none',
+                      transform:
+                        !yaiEmbedded && isSmallScreen && sidebarExpanded
+                          ? MOBILE_PANE_SHIFT
+                          : 'none',
                       transition: prefersReducedMotion ? undefined : SIDEBAR_TRANSITION,
                     }}
                     /** Recoil's flip is deferred past the opening frames and
                      *  the closing transition outlives it at the other end, so
                      *  `isSliding` covers the travel `sidebarExpanded` brackets
                      *  too late and drops too early. */
-                    inert={isSmallScreen && (sidebarExpanded || isSliding) ? '' : undefined}
+                    inert={
+                      !yaiEmbedded && isSmallScreen && (sidebarExpanded || isSliding)
+                        ? ''
+                        : undefined
+                    }
                   >
                     <Outlet />
                   </div>
@@ -185,14 +192,16 @@ export default function Root() {
                       the deferred flip has not committed yet. Once expanded
                       lands, a full-width drawer covers it, so keeping it
                       mounted would only expose a duplicate dismiss control. */}
-                  {isSmallScreen && (drawerStrip || (isSliding && !sidebarExpanded)) && (
-                    <MobileDrawerScrim
-                      expanded={sidebarExpanded}
-                      isSliding={isSliding}
-                      prefersReducedMotion={prefersReducedMotion}
-                      onClick={onScrimClick}
-                    />
-                  )}
+                  {!yaiEmbedded &&
+                    isSmallScreen &&
+                    (drawerStrip || (isSliding && !sidebarExpanded)) && (
+                      <MobileDrawerScrim
+                        expanded={sidebarExpanded}
+                        isSliding={isSliding}
+                        prefersReducedMotion={prefersReducedMotion}
+                        onClick={onScrimClick}
+                      />
+                    )}
                 </div>
               </div>
             </PromptGroupsProvider>

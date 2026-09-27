@@ -1,8 +1,8 @@
-const { isEnabled } = require('@librechat/api');
+const { isEnabled, getYaiTitleFallback } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys } = require('librechat-data-provider');
 const getLogStores = require('~/cache/getLogStores');
-const { saveConvo } = require('~/models');
+const { saveConvo, getConvo } = require('~/models');
 const { resolveConversationTitle } = require('../titlePolicy');
 
 /**
@@ -106,7 +106,12 @@ const addTitle = async (
       return;
     }
 
-    const generatedTitle = await titlePromise;
+    const isYai = req.user?.provider === 'yai';
+    const generatedTitle =
+      (await titlePromise) ||
+      (isYai && !signal?.aborted && !discardSignal?.aborted
+        ? getYaiTitleFallback(text)
+        : undefined);
     if (!abortController.signal.aborted) {
       abortController.abort();
     }
@@ -158,7 +163,7 @@ const addTitle = async (
       return;
     }
 
-    await saveConvo(
+    const saved = await saveConvo(
       {
         userId: req?.user?.id,
         isTemporary: req?.body?.isTemporary,
@@ -168,8 +173,23 @@ const addTitle = async (
         conversationId: convoId,
         title,
       },
-      { context: 'api/server/services/Endpoints/agents/title.js', noUpsert: true },
+      {
+        context: 'api/server/services/Endpoints/agents/title.js',
+        noUpsert: true,
+        ...(isYai ? { onlyIfUntitled: true } : {}),
+      },
     );
+    if (isYai) {
+      const persisted = saved ?? (await getConvo(req.user.id, convoId));
+      if (persisted?.title) {
+        await titleCache.set(key, persisted.title, 120000);
+        await onTitleGenerated?.({
+          conversationId: convoId,
+          title: persisted.title,
+          persisted: true,
+        });
+      }
+    }
   } catch (error) {
     logger.error('Error generating title:', error);
   }

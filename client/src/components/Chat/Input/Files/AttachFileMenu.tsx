@@ -3,6 +3,7 @@ import { useRecoilState } from 'recoil';
 import * as Ariakit from '@ariakit/react';
 import {
   FileSearch,
+  Plus,
   ImageUpIcon,
   FileType2Icon,
   FileImageIcon,
@@ -312,7 +313,7 @@ const AttachFileMenu = ({
           )}
         >
           <div className="flex w-full items-center justify-center gap-2">
-            <AttachmentIcon />
+            {import.meta.env.VITE_YAI_EMBEDDED === 'true' ? <Plus size={18} /> : <AttachmentIcon />}
           </div>
         </Ariakit.MenuButton>
       }

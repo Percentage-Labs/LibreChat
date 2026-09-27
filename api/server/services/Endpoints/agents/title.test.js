@@ -7,6 +7,7 @@ const mockCache = {
   delete: jest.fn((key) => mockCacheStore.delete(key)),
 };
 const mockSaveConvo = jest.fn();
+const mockGetConvo = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   ...jest.requireActual('@librechat/api'),
@@ -22,6 +23,7 @@ jest.mock('~/cache/getLogStores', () => jest.fn(() => mockCache));
 
 jest.mock('~/models', () => ({
   saveConvo: (...args) => mockSaveConvo(...args),
+  getConvo: (...args) => mockGetConvo(...args),
 }));
 
 const addTitle = require('./title');
@@ -38,7 +40,73 @@ const makeReq = () => ({ user: { id: 'user-1' }, body: {}, config: {} });
 describe('agents addTitle', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSaveConvo.mockReset();
+    mockGetConvo.mockReset();
     mockCacheStore.clear();
+  });
+
+  it('persists a first-message fallback for a failed YAI title request and announces persistence', async () => {
+    const client = makeClient();
+    client.titleConvo.mockRejectedValue(new Error('provider unavailable'));
+    mockSaveConvo.mockResolvedValue({ title: 'Plan a garden' });
+    const onTitleGenerated = jest.fn();
+    await addTitle(
+      { ...makeReq(), user: { id: 'user-1', provider: 'yai' } },
+      {
+        text: 'Plan a garden',
+        client,
+        conversationId: 'yai-new',
+        onTitleGenerated,
+      },
+    );
+    expect(mockSaveConvo).toHaveBeenCalledWith(
+      expect.anything(),
+      { conversationId: 'yai-new', title: 'Plan a garden' },
+      expect.objectContaining({ noUpsert: true, onlyIfUntitled: true }),
+    );
+    expect(onTitleGenerated).toHaveBeenLastCalledWith({
+      conversationId: 'yai-new',
+      title: 'Plan a garden',
+      persisted: true,
+    });
+  });
+
+  it('does not produce a fallback for a stopped YAI title request', async () => {
+    const client = makeClient();
+    client.titleConvo.mockResolvedValue(undefined);
+    const controller = new AbortController();
+    controller.abort();
+    await addTitle(
+      { ...makeReq(), user: { id: 'user-1', provider: 'yai' } },
+      {
+        text: 'Plan a garden',
+        client,
+        conversationId: 'yai-stopped',
+        signal: controller.signal,
+      },
+    );
+    expect(mockSaveConvo).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a manual title that won the conditional persistence race', async () => {
+    mockSaveConvo.mockResolvedValue(null);
+    mockGetConvo.mockResolvedValue({ title: 'My chosen title' });
+    const onTitleGenerated = jest.fn();
+    await addTitle(
+      { ...makeReq(), user: { id: 'user-1', provider: 'yai' } },
+      {
+        text: 'Plan a garden',
+        client: makeClient(),
+        conversationId: 'yai-renamed',
+        onTitleGenerated,
+      },
+    );
+    expect(mockCacheStore.get('user-1-yai-renamed')).toBe('My chosen title');
+    expect(onTitleGenerated).toHaveBeenLastCalledWith({
+      conversationId: 'yai-renamed',
+      title: 'My chosen title',
+      persisted: true,
+    });
   });
 
   it('uses the explicit conversationId for the cache key and saveConvo (immediate mode)', async () => {

@@ -154,6 +154,7 @@ export interface ConversationMethods {
       context?: string;
       unsetFields?: Record<string, number>;
       noUpsert?: boolean;
+      onlyIfUntitled?: boolean;
       createdAtOnInsert?: Date;
       preserveUpdatedAt?: boolean;
       /** `_id`s of messages this save just wrote. When present, they are appended with
@@ -718,6 +719,7 @@ export function createConversationMethods(
       createdAtOnInsert?: Date;
       preserveUpdatedAt?: boolean;
       appendMessageIds?: Types.ObjectId[];
+      onlyIfUntitled?: boolean;
     },
   ) {
     try {
@@ -840,8 +842,12 @@ export function createConversationMethods(
         return operation;
       };
 
-      const baseFilter = { conversationId, user: userId };
-      const canUpsert = metadata?.noUpsert !== true;
+      const baseFilter = {
+        conversationId,
+        user: userId,
+        ...(metadata?.onlyIfUntitled ? { title: { $in: [null, '', 'New Chat', 'New chat'] } } : {}),
+      };
+      const canUpsert = metadata?.noUpsert !== true && metadata?.onlyIfUntitled !== true;
       const runUpdate = (
         filter: Record<string, unknown>,
         operation: Record<string, unknown>,

@@ -159,7 +159,10 @@ function MessagesViewContent({
           >
             <div
               ref={contentRef}
-              className="flex flex-col pb-9 pt-14"
+              className={cn(
+                'flex flex-col pb-9',
+                import.meta.env.VITE_YAI_EMBEDDED === 'true' ? 'pt-4' : 'pt-14',
+              )}
               style={
                 steerOverlayHeight > 0
                   ? { paddingBottom: `calc(2.25rem + ${steerOverlayHeight}px)` }

@@ -22,6 +22,7 @@ import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
 import Header from './Header';
+import YaiChat from './YaiChat';
 import Footer from './Footer';
 import { cn } from '~/utils';
 import store from '~/store';
@@ -110,12 +111,10 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     content = <Landing centerFormOnLanding={centerFormOnLanding} />;
   }
 
-  const chatFormPlaceholder =
-    isProjectLandingPage && project
-      ? localize('com_ui_new_chat_in_project', { name: project.name })
-      : isYaiEmbedded && isLandingPage
-        ? localize('com_yai_chat_placeholder')
-        : undefined;
+  let chatFormPlaceholder = isYaiEmbedded ? localize('com_yai_chat_placeholder') : undefined;
+  if (isProjectLandingPage && project) {
+    chatFormPlaceholder = localize('com_ui_new_chat_in_project', { name: project.name });
+  }
 
   // Recoil conversation can lag the route during navigation; only announce a
   // title that belongs to the conversation currently in the URL.
@@ -142,7 +141,6 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
       index={index}
       placeholder={chatFormPlaceholder}
       project={isProjectLandingPage ? project : undefined}
-      yaiLanding={isYaiEmbedded && isLandingPage}
     />
   );
 
@@ -151,53 +149,47 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
       <ChatContext.Provider value={chatHelpers}>
         <AddedChatContext.Provider value={addedChatHelpers}>
           <Presentation>
-            <div className="relative flex h-full w-full flex-col">
-              <h1 className="sr-only">{pageHeading}</h1>
-              {!(isYaiEmbedded && isLandingPage) && (
+            {isYaiEmbedded ? (
+              <YaiChat
+                conversationId={conversationId}
+                title={pageHeading}
+                landing={isLandingPage}
+                content={content}
+                composer={composerContent}
+              />
+            ) : (
+              <div className="relative flex h-full w-full flex-col">
+                <h1 className="sr-only">{pageHeading}</h1>
                 <Header
                   parentConversationId={parentConversationId}
                   readOnly={isSubagentThreadReadOnly}
                 />
-              )}
-              <>
-                <div
-                  className={cn(
-                    'flex flex-col',
-                    isLandingPage
-                      ? isYaiEmbedded
-                        ? 'min-h-0 flex-1 items-center justify-center overflow-y-auto px-4 sm:px-6'
-                        : 'flex-1 items-center justify-end sm:justify-center'
-                      : 'h-full overflow-y-auto',
-                  )}
-                >
-                  {content}
+                <>
                   <div
                     className={cn(
-                      'w-full',
-                      !isLandingPage && 'scrollbar-gutter-spacer',
-                      isLandingPage &&
-                        (isYaiEmbedded
-                          ? 'max-w-4xl'
-                          : 'max-w-3xl transition-all duration-200 xl:max-w-4xl'),
+                      'flex flex-col',
+                      isLandingPage
+                        ? 'flex-1 items-center justify-end sm:justify-center'
+                        : 'h-full overflow-y-auto',
                     )}
                   >
-                    {isYaiEmbedded && isLandingPage ? (
-                      <>
-                        {composerContent}
-                        <ConversationStarters />
-                      </>
-                    ) : (
-                      <>
-                        {isLandingPage && <ConversationStarters />}
-                        {composerContent}
-                      </>
-                    )}
-                    {!isLandingPage && <Footer />}
+                    {content}
+                    <div
+                      className={cn(
+                        'w-full',
+                        !isLandingPage && 'scrollbar-gutter-spacer',
+                        isLandingPage && 'max-w-3xl transition-all duration-200 xl:max-w-4xl',
+                      )}
+                    >
+                      {isLandingPage && <ConversationStarters />}
+                      {composerContent}
+                      {!isLandingPage && <Footer />}
+                    </div>
                   </div>
-                </div>
-                {isLandingPage && !isYaiEmbedded && <Footer />}
-              </>
-            </div>
+                  {isLandingPage && <Footer />}
+                </>
+              </div>
+            )}
           </Presentation>
         </AddedChatContext.Provider>
       </ChatContext.Provider>
