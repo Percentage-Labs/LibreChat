@@ -19,6 +19,7 @@ const { getRetentionExpiry } = require('~/server/services/Files/retention');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
 const { preflightCodeOutputBatch } = require('~/server/services/Files/Code/preflight');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
+const { getYaiMcpToolConfig } = require('~/server/services/MCP');
 const { loadTools } = require('~/app/clients/tools/util');
 
 /**
@@ -42,6 +43,15 @@ const toolAccessPermType = {
  */
 const verifyWebSearchAuth = async (req, res) => {
   try {
+    if (req.user.provider === 'yai') {
+      const config = await getYaiMcpToolConfig(req.user);
+      if (config.searchProvider === 'keenable') {
+        return res.status(200).json({
+          authenticated: config.tools.some((binding) => binding.id === Tools.web_search),
+          authTypes: [],
+        });
+      }
+    }
     const appConfig = req.config;
     const userId = req.user.id;
     /** @type {TCustomConfig['webSearch']} */

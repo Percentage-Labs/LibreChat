@@ -75,4 +75,10 @@ describe('useBuiltinAuthMap', () => {
     const { result } = renderHook(() => useBuiltinAuthMap(), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.has(WEB_SEARCH)).toBe(false));
   });
+
+  test('clears the flag for server-managed search without credential categories', async () => {
+    mockVerify.mockResolvedValue({ authenticated: true, authTypes: [] });
+    const { result } = renderHook(() => useBuiltinAuthMap(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.has(WEB_SEARCH)).toBe(false));
+  });
 });

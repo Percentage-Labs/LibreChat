@@ -188,6 +188,10 @@ export default function ApiKeyDialog({
     scraper: false,
   });
 
+  if (!authTypes.some(([, authType]) => authType === AuthType.USER_PROVIDED)) {
+    return null;
+  }
+
   const providerAuthType = authTypes.find(([cat]) => cat === SearchCategories.PROVIDERS)?.[1];
   const scraperAuthType = authTypes.find(([cat]) => cat === SearchCategories.SCRAPERS)?.[1];
   const rerankerAuthType = authTypes.find(([cat]) => cat === SearchCategories.RERANKERS)?.[1];

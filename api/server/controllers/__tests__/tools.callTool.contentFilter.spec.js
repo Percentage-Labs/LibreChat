@@ -47,6 +47,10 @@ jest.mock('~/server/services/Tools/credentials', () => ({
   loadAuthValues: jest.fn(),
 }));
 
+jest.mock('~/server/services/MCP', () => ({
+  getYaiMcpToolConfig: jest.fn(),
+}));
+
 jest.mock('~/app/clients/tools/util', () => ({
   loadTools: jest.fn(async () => ({
     loadedTools: [{ invoke: mockInvoke }],

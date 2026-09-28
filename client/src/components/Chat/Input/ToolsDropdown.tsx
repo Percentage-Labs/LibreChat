@@ -1,7 +1,15 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
-import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
+import {
+  Brain,
+  Check,
+  Globe,
+  ScrollText,
+  Settings,
+  Settings2,
+  TerminalSquareIcon,
+} from 'lucide-react';
 import {
   AuthType,
   Permissions,
@@ -100,11 +108,9 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const { isPinned: isSkillsPinned, setIsPinned: setIsSkillsPinned } = skills ?? {};
   const { isPinned: isMemoryPinned, setIsPinned: setIsMemoryPinned } = memory ?? {};
 
-  const showWebSearchSettings = useMemo(() => {
-    const authTypes = webSearchAuthData?.authTypes ?? [];
-    if (authTypes.length === 0) return true;
-    return !authTypes.every(([, authType]) => authType === AuthType.SYSTEM_DEFINED);
-  }, [webSearchAuthData?.authTypes]);
+  const showWebSearchSettings = webSearchAuthData?.authTypes?.some(
+    ([, authType]) => authType === AuthType.USER_PROVIDED,
+  );
 
   const handleWebSearchToggle = useCallback(() => {
     const newValue = !webSearch?.toggleState;
@@ -198,6 +204,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     dropdownItems.push({
       onClick: handleWebSearchToggle,
       hideOnClick: false,
+      ariaChecked: webSearch?.isToolEnabled ?? false,
       render: (props) => (
         <div {...props}>
           <div className="flex items-center gap-2">
@@ -205,6 +212,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
             <span>{localize('com_ui_web_search')}</span>
           </div>
           <div className="flex items-center gap-1">
+            {webSearch?.isToolEnabled && <Check className="icon-md" aria-hidden="true" />}
             {showWebSearchSettings && (
               <button
                 type="button"

@@ -65,6 +65,28 @@ type OAuthReconnectResult =
 const OAUTH_RECOVERY_RECONNECT_ATTEMPTS = 3;
 const OAUTH_RECOVERY_RECONNECT_DELAY_MS = 2000;
 
+type CallToolOptions = {
+  user?: IUser;
+  serverName: string;
+  serverConfig?: t.ParsedServerConfig;
+  toolName: string;
+  provider: t.Provider;
+  toolArguments?: Record<string, unknown>;
+  options?: RequestOptions;
+  requestBody?: RequestBody;
+  requestScopedConnections?: t.RequestScopedMCPConnectionStore;
+  tokenMethods?: TokenMethods;
+  customUserVars?: Record<string, string>;
+  flowManager: FlowStateManager<MCPOAuthTokens | null>;
+  oauthStart?: t.OAuthStartHandler;
+  oauthEnd?: () => Promise<void>;
+  graphTokenResolver?: GraphTokenResolver;
+  oboTokenResolver?: OboTokenResolver;
+  oboTrustChecker?: OboTrustChecker;
+  rawResult?: boolean;
+  onRawResult?: (result: t.MCPToolCallResponse) => Promise<void> | void;
+};
+
 /**
  * Centralized manager for MCP server connections and tool execution.
  * Extends UserConnectionManager to handle both app-level and user-specific connections.
@@ -770,6 +792,8 @@ Please follow these instructions when using tools from the respective MCP server
    *   When provided and the server config contains `{{LIBRECHAT_GRAPH_ACCESS_TOKEN}}` placeholders,
    *   they will be resolved to actual Graph API tokens before the tool call.
    */
+  async callTool(options: CallToolOptions & { rawResult: true }): Promise<t.MCPToolCallResponse>;
+  async callTool(options: CallToolOptions & { rawResult?: false }): Promise<t.FormattedToolResponse>;
   async callTool({
     user,
     serverName,
@@ -788,26 +812,9 @@ Please follow these instructions when using tools from the respective MCP server
     graphTokenResolver,
     oboTokenResolver,
     oboTrustChecker,
-  }: {
-    user?: IUser;
-    serverName: string;
-    /** Pre-resolved config from tool creation context — avoids readThrough TTL and cross-tenant issues */
-    serverConfig?: t.ParsedServerConfig;
-    toolName: string;
-    provider: t.Provider;
-    toolArguments?: Record<string, unknown>;
-    options?: RequestOptions;
-    requestBody?: RequestBody;
-    requestScopedConnections?: t.RequestScopedMCPConnectionStore;
-    tokenMethods?: TokenMethods;
-    customUserVars?: Record<string, string>;
-    flowManager: FlowStateManager<MCPOAuthTokens | null>;
-    oauthStart?: t.OAuthStartHandler;
-    oauthEnd?: () => Promise<void>;
-    graphTokenResolver?: GraphTokenResolver;
-    oboTokenResolver?: OboTokenResolver;
-    oboTrustChecker?: OboTrustChecker;
-  }): Promise<t.FormattedToolResponse> {
+    rawResult,
+    onRawResult,
+  }: CallToolOptions): Promise<t.FormattedToolResponse | t.MCPToolCallResponse> {
     const userId = user?.id;
     const logPrefix = userId ? `[MCP][User: ${userId}][${serverName}]` : `[MCP][${serverName}]`;
     this.bindRequestScopedConnectionStore(requestScopedConnections);
@@ -1133,7 +1140,8 @@ Please follow these instructions when using tools from the respective MCP server
           await this.updateUserLastActivity(userId);
         }
         this.checkIdleConnections();
-        return formatToolContent(result as t.MCPToolCallResponse, provider);
+        await onRawResult?.(result as t.MCPToolCallResponse);
+        return rawResult ? result : formatToolContent(result as t.MCPToolCallResponse, provider);
       } catch (error) {
         if (error instanceof OAuthRecoveryTakeoverRequired) {
           recoveryTakeoverConsumed = true;

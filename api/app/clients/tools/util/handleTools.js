@@ -53,6 +53,9 @@ const {
   createMCPPermissionContext,
   resolveMcpServerContext,
   resolveCollisionAuditNames,
+  getYaiMcpToolConfig,
+  findYaiMcpBinding,
+  createYaiKeenableSearchTool,
 } = require('~/server/services/MCP');
 const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
@@ -247,10 +250,11 @@ const loadTools = async ({
 
   const requestedTools = {};
   const hasMCPTools = tools.some((toolName) => toolName && mcpToolPattern.test(toolName));
+  const isYaiUser = options.req?.user?.provider === 'yai';
   const mcpPermissionContext =
     options.mcpPermissionContext ?? createMCPPermissionContext(options.req);
   const canUseMCP = hasMCPTools
-    ? await mcpPermissionContext.canUseServers(options.req?.user)
+    ? isYaiUser || (await mcpPermissionContext.canUseServers(options.req?.user))
     : true;
   let loggedMCPDenied = false;
 
@@ -289,6 +293,8 @@ const loadTools = async ({
    */
   let primedCodeFiles;
   const requestedMCPTools = {};
+  const yaiMcpConfig =
+    isYaiUser && hasMCPTools ? await getYaiMcpToolConfig(options.req.user, signal) : undefined;
 
   /** Resolve config-source servers for the current user/tenant context */
   let configServers;
@@ -399,6 +405,21 @@ const loadTools = async ({
       };
       continue;
     } else if (tool === Tools.web_search) {
+      if (isYaiUser) {
+        const yaiConfig = await getYaiMcpToolConfig(options.req.user, signal);
+        if (yaiConfig.searchProvider === 'keenable') {
+          const { onSearchResults } = options?.[Tools.web_search] ?? {};
+          requestedTools[tool] = async () =>
+            createYaiKeenableSearchTool({
+              user: options.req.user,
+              req: options.req,
+              signal,
+              onSearchResults,
+              configuration: yaiConfig,
+            });
+          continue;
+        }
+      }
       const result = await loadWebSearchAuth({
         userId: user,
         loadAuthValues,
@@ -504,6 +525,7 @@ const loadTools = async ({
         continue;
       }
       if (toolName === Constants.mcp_all) {
+        if (isYaiUser) continue;
         requestedMCPTools[serverName] = [
           {
             type: 'all',
@@ -511,6 +533,13 @@ const loadTools = async ({
             config: serverConfig,
           },
         ];
+        continue;
+      }
+
+      if (
+        isYaiUser &&
+        !findYaiMcpBinding(yaiMcpConfig, serverName, toolName)
+      ) {
         continue;
       }
 
@@ -597,6 +626,7 @@ const loadTools = async ({
           res: options.res,
           streamId: options.req?._resumableStreamId || null,
           jobCreatedAt: options.jobCreatedAt,
+          yaiMcpConfig,
           model: agent?.model ?? model,
           serverName: config.serverName,
           provider: agent?.provider ?? endpoint,

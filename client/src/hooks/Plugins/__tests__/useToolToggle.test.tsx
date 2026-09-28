@@ -24,7 +24,7 @@ let mockStartupConfig: { interface?: { defaultPinnedTools?: string[] } } | undef
 // Mock data-provider auth query + startup config
 jest.mock('~/data-provider', () => ({
   useVerifyAgentToolAuth: jest.fn().mockReturnValue({
-    data: { authenticated: true },
+    data: { authenticated: true, authTypes: [] },
   }),
   useGetStartupConfig: jest.fn(() => ({ data: mockStartupConfig })),
 }));
@@ -46,6 +46,27 @@ describe('useToolToggle', () => {
     jest.clearAllMocks();
     localStorage.clear();
     mockStartupConfig = undefined;
+  });
+
+  it('enables and disables server-managed web search without opening a credential dialog', () => {
+    const openDialog = jest.fn();
+    const { result } = renderHook(
+      () =>
+        useToolToggle({
+          conversationId: 'managed-search',
+          toolKey: Tools.web_search,
+          localStorageKey: LocalStorageKeys.LAST_WEB_SEARCH_TOGGLE_,
+          authConfig: { toolId: Tools.web_search },
+          setIsDialogOpen: openDialog,
+        }),
+      { wrapper: Wrapper },
+    );
+
+    act(() => result.current.handleChange({ value: true }));
+    expect(result.current.isToolEnabled).toBe(true);
+    act(() => result.current.handleChange({ value: false }));
+    expect(result.current.isToolEnabled).toBe(false);
+    expect(openDialog).not.toHaveBeenCalled();
   });
 
   // ─── Dual-Write Behavior ───────────────────────────────────────────

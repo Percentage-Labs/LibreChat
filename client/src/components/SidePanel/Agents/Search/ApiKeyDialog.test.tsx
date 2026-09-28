@@ -40,6 +40,20 @@ describe('ApiKeyDialog', () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  it.each([false, true])(
+    'does not open a key dialog without user credentials, authenticated=%s',
+    (isToolAuthenticated) => {
+      mockUseGetStartupConfig.mockReturnValue({
+        data: { webSearch: { searchProvider: 'tavily', scraperProvider: 'tavily' } },
+      });
+      render(
+        <ApiKeyDialog {...defaultProps} authTypes={[]} isToolAuthenticated={isToolAuthenticated} />,
+      );
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('com_ui_enter_api_key')).not.toBeInTheDocument();
+    },
+  );
+
   it('shows all dropdowns and both reranker fields when no config is set', () => {
     mockUseGetStartupConfig.mockReturnValue({ data: {} });
     render(<ApiKeyDialog {...defaultProps} />);

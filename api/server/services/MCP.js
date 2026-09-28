@@ -1,4 +1,6 @@
 const { tool } = require('@librechat/agents/langchain/tools');
+const { z } = require('zod');
+const { createHash, randomUUID } = require('node:crypto');
 const { logger, getTenantId } = require('@librechat/data-schemas');
 const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
@@ -75,6 +77,286 @@ const RECONNECT_THROTTLE_MS = 10_000;
 
 const missingToolCache = new Map();
 const MISSING_TOOL_TTL_MS = 10_000;
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function mcpSchemaRevision(schema) {
+  return createHash('sha256').update(stableJson(schema ?? {})).digest('hex');
+}
+
+function yaiToolOperationId(config, userId, toolKey) {
+  const stableCallId = config?.toolCall?.id;
+  if (!stableCallId) return randomUUID();
+  const hex = createHash('sha256')
+    .update(
+      `${userId}:${config?.metadata?.thread_id ?? ''}:${config?.metadata?.run_id ?? ''}:${config?.configurable?.__librechat_checkpoint_ns ?? ''}:${toolKey}:${stableCallId}`,
+    )
+    .digest('hex')
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
+
+async function yaiMcpBillingRequest(user, action, body, signal) {
+  const apiBase = process.env.YAI_API_BASE_URL;
+  const serviceSecret = process.env.YAI_LIBRECHAT_SERVICE_KEY;
+  if (!apiBase || !serviceSecret || !user?.id) throw new Error('YAI MCP billing is unavailable');
+  const response = await fetch(
+    `${apiBase.replace(/\/$/, '')}/integrations/librechat/tools/${action}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-yai-librechat-service-key': serviceSecret,
+        'x-yai-librechat-account-id': user.id,
+      },
+      body: JSON.stringify(body),
+      signal: signal ?? AbortSignal.timeout(20_000),
+      redirect: 'error',
+    },
+  );
+  if (!response.ok) throw new Error(`YAI MCP billing returned ${response.status}`);
+  if (action === 'unknown') return;
+  return response.json();
+}
+
+async function getYaiMcpToolConfig(user, signal) {
+  const apiBase = process.env.YAI_API_BASE_URL;
+  const serviceSecret = process.env.YAI_LIBRECHAT_SERVICE_KEY;
+  if (!apiBase || !serviceSecret || !user?.id) throw new Error('YAI MCP configuration is unavailable');
+  const response = await fetch(`${apiBase.replace(/\/$/, '')}/integrations/librechat/tools`, {
+    headers: {
+      'x-yai-librechat-service-key': serviceSecret,
+      'x-yai-librechat-account-id': user.id,
+    },
+    signal: signal ?? AbortSignal.timeout(20_000),
+    redirect: 'error',
+  });
+  if (!response.ok) throw new Error(`YAI MCP configuration returned ${response.status}`);
+  const result = await response.json();
+  if (!result || !Array.isArray(result.tools)) throw new Error('YAI MCP configuration is invalid');
+  return result;
+}
+
+function findYaiMcpBinding(config, serverName, toolName) {
+  return config?.tools?.find(
+    (binding) => binding.serverName === serverName && binding.toolName === toolName,
+  );
+}
+
+function normalizeKeenableSearch(raw) {
+  let payload = raw?.structuredContent;
+  if (payload == null && Array.isArray(raw?.content)) {
+    for (const part of raw.content) {
+      if (typeof part?.text !== 'string') continue;
+      try {
+        payload = JSON.parse(part.text);
+        break;
+      } catch {}
+    }
+  }
+  if (payload == null)
+    payload =
+      raw?.content
+        ?.map((part) => part?.text)
+        .filter(Boolean)
+        .join('\n') || raw;
+  const findRows = (value, depth = 0) => {
+    if (depth > 4 || value == null) return [];
+    if (typeof value === 'string') {
+      return value.split(/\r?\n\r?\n---\r?\n\r?\n/).flatMap((block) => {
+        const result =
+          /^Title:\s*([^\r\n]+)\r?\nURL:\s*(\S+)[\s\S]*?\r?\nSnippets:\s*([\s\S]*)$/.exec(
+            block.trim(),
+          );
+        return result ? [{ title: result[1], url: result[2], snippet: result[3] }] : [];
+      });
+    }
+    if (Array.isArray(value)) return value.filter((row) => row && typeof row === 'object');
+    if (typeof value !== 'object') return [];
+    const record = value;
+    for (const key of ['results', 'organic', 'items', 'web_results', 'sources']) {
+      if (Array.isArray(record[key])) return findRows(record[key], depth + 1);
+    }
+    for (const child of Object.values(record)) {
+      const rows = findRows(child, depth + 1);
+      if (rows.length) return rows;
+    }
+    return [];
+  };
+  const organic = findRows(payload)
+    .map((row) => {
+      const link = row.link ?? row.url;
+      if (typeof link !== 'string' || !/^https?:\/\//i.test(link)) return null;
+      return {
+        title: String(row.title ?? row.name ?? link).slice(0, 500),
+        link,
+        snippet: String(row.snippet ?? row.description ?? row.content ?? row.text ?? '').slice(
+          0,
+          4000,
+        ),
+      };
+    })
+    .filter(Boolean);
+  return { organic, topStories: [] };
+}
+
+function mcpResultForModel(raw) {
+  const text = raw?.content?.map((part) => part?.text).filter(Boolean).join('\n');
+  return text || JSON.stringify(raw?.structuredContent ?? raw ?? {});
+}
+
+async function callYaiMcpTool({ user, binding, toolArguments, runnableConfig, signal, call }) {
+  if (!binding || !['read', 'write'].includes(binding.access))
+    throw new Error('This YAI MCP tool is not approved');
+  const operationId = yaiToolOperationId(runnableConfig, user.id, `${binding.serverName}:${binding.toolName}`);
+  const requestFingerprint = createHash('sha256')
+    .update(
+      stableJson({
+        serverName: binding.serverName,
+        toolName: binding.toolName,
+        configurationRevision: binding.configurationRevision,
+        schemaRevision: binding.schemaRevision,
+        toolArguments,
+      }),
+    )
+    .digest('hex');
+  let approval;
+  if (binding.access === 'write') {
+    const toolCallId = runnableConfig?.toolCall?.id;
+    const runId = runnableConfig?.metadata?.run_id;
+    const conversationId = runnableConfig?.metadata?.thread_id;
+    const checkpointId =
+      runnableConfig?.configurable?.checkpoint_id ??
+      runnableConfig?.configurable?.__librechat_checkpoint_ns;
+    if (!toolCallId || !runId || !conversationId || !checkpointId)
+      throw new Error('A durable approval checkpoint is required for this MCP write');
+    approval = {
+      decision: 'approve',
+      toolCallId,
+      runId,
+      conversationId,
+      checkpointId,
+      requestFingerprint,
+    };
+  }
+  const reservation = await yaiMcpBillingRequest(
+    user,
+    'reserve',
+    {
+      operationId,
+      serverName: binding.serverName,
+      toolName: binding.toolName,
+      schemaRevision: binding.schemaRevision,
+      configurationRevision: binding.configurationRevision,
+      toolArguments,
+      ...(approval && { approval }),
+    },
+    signal,
+  );
+  try {
+    return await call(
+      async (raw) => {
+        await yaiMcpBillingRequest(user, 'settle', { callId: reservation.callId, raw }, signal);
+      },
+      reservation,
+    );
+  } catch (error) {
+    try {
+      await yaiMcpBillingRequest(user, 'unknown', { requestId: reservation.requestId }, signal);
+    } catch (settleError) {
+      logger.error('[MCP][YAI] Failed to retain uncertain tool usage:', settleError);
+    }
+    throw error;
+  }
+}
+
+async function createYaiKeenableSearchTool({ user, req, signal, onSearchResults, configuration }) {
+  const config = configuration ?? (await getYaiMcpToolConfig(user, signal));
+  if (config.searchProvider !== 'keenable')
+    throw new Error('Keenable search is not selected for YAI chat');
+  const binding = config.tools.find((entry) => entry.id === 'web_search');
+  if (!binding) throw new Error('Keenable search is not configured for this YAI account');
+  return tool(
+    async ({ query }, runnableConfig) => {
+      const requestSignal = runnableConfig?.signal ?? signal;
+      const currentConfig = await getYaiMcpToolConfig(user, requestSignal);
+      const currentBinding = currentConfig.tools.find((entry) => entry.id === binding.id);
+      if (
+        !currentBinding ||
+        currentBinding.configurationRevision !== binding.configurationRevision ||
+        currentBinding.schemaRevision !== binding.schemaRevision
+      )
+        throw new Error('Keenable search configuration changed; refresh the approved tool catalog');
+      const { configServers } = await resolveMcpServerContext({ user, body: req?.body });
+      const registry = getMCPServersRegistry();
+      const serverConfig = await registry.getServerConfig(
+        binding.serverName,
+        undefined,
+        configServers,
+      );
+      if (!serverConfig || serverConfig.source === 'user')
+        throw new Error('Keenable MCP server is unavailable');
+      const manager = getMCPManager();
+      const discovered = await manager.discoverServerTools({
+        serverName: binding.serverName,
+        user,
+        configServers,
+        requestBody: req?.body,
+        signal: requestSignal,
+      });
+      const current = discovered.tools?.find((entry) => entry.name === binding.toolName);
+      if (
+        !current?.inputSchema ||
+        mcpSchemaRevision(current.inputSchema) !== binding.schemaRevision
+      )
+        throw new Error('Keenable search schema changed; refresh the approved tool catalog');
+      const properties = current.inputSchema.properties;
+      if (!properties || !Object.hasOwn(properties, 'query'))
+        throw new Error('Keenable search schema must accept a query');
+      return callYaiMcpTool({
+        user,
+        binding,
+        toolArguments: { query },
+        runnableConfig,
+        signal: requestSignal,
+        call: async (onRawResult, reservation) => {
+          const raw = reservation.completed
+            ? reservation.raw
+            : await manager.callTool({
+                user,
+                requestBody: req?.body,
+                serverName: binding.serverName,
+                serverConfig,
+                toolName: binding.toolName,
+                toolArguments: { query },
+                provider: 'openai',
+                options: { signal: requestSignal },
+                flowManager: getFlowStateManager(getLogStores(CacheKeys.FLOWS)),
+                rawResult: true,
+              });
+          if (!reservation.completed) await onRawResult(raw);
+          if (raw.isError) throw new Error('Keenable search failed');
+          onSearchResults?.({ success: true, data: normalizeKeenableSearch(raw) }, runnableConfig);
+          return mcpResultForModel(raw);
+        },
+      });
+    },
+    {
+      name: 'web_search',
+      description: binding.description || 'Search the web using Keenable.',
+      schema: z.object({ query: z.string().trim().min(1).max(2000) }),
+    },
+  );
+}
 
 async function userCanUseMCPServers(user, req) {
   if (!user?.id || !user?.role) {
@@ -804,6 +1086,7 @@ async function createMCPTools({
   requestScopedConnections,
   streamId = null,
   jobCreatedAt,
+  yaiMcpConfig,
 }) {
   const serverConfig =
     config ?? (await getMCPServersRegistry().getServerConfig(serverName, user?.id, configServers));
@@ -878,6 +1161,7 @@ async function createMCPTools({
       requestBody,
       requestScopedConnections,
       config: serverConfig,
+      yaiMcpConfig,
     });
     if (toolInstance) {
       serverTools.push(toolInstance);
@@ -926,6 +1210,7 @@ async function createMCPTool({
   onAvailableTools,
   streamId = null,
   jobCreatedAt,
+  yaiMcpConfig,
 }) {
   /** `loadTools` already resolved the server for this key; parsing is the fallback. */
   const [parsedToolName, parsedServerName] = splitMCPToolKey(
@@ -1094,6 +1379,7 @@ async function createMCPTool({
     toolDefinition: toolEntry['function'],
     streamId,
     jobCreatedAt,
+    yaiMcpConfig,
   });
 }
 
@@ -1112,6 +1398,7 @@ function createToolInstance({
   provider: capturedProvider,
   streamId = null,
   jobCreatedAt,
+  yaiMcpConfig,
 }) {
   /** @type {LCTool} */
   const { description, parameters } = toolDefinition;
@@ -1144,9 +1431,12 @@ function createToolInstance({
     const userId = effectiveUser?.id || config?.configurable?.user_id || capturedUser?.id;
     try {
       const provider = (config?.metadata?.provider || capturedProvider)?.toLowerCase();
-      const canUseMCP = mcpPermissionContext
-        ? await mcpPermissionContext.canUseServers(permissionUser)
-        : await userCanUseMCPServers(permissionUser);
+      const canUseMCP =
+        effectiveUser?.provider === 'yai'
+          ? true
+          : mcpPermissionContext
+            ? await mcpPermissionContext.canUseServers(permissionUser)
+            : await userCanUseMCPServers(permissionUser);
       if (!canUseMCP) {
         throw new Error('Forbidden: Insufficient MCP server permissions');
       }
@@ -1163,6 +1453,7 @@ function createToolInstance({
         toolCall,
         streamId,
         jobCreatedAt,
+    yaiMcpConfig,
       });
       const oauthStart = createOAuthStart({
         flowId,
@@ -1180,35 +1471,78 @@ function createToolInstance({
       const customUserVars =
         config?.configurable?.userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
 
-      const result = await mcpManager.callTool({
-        serverName,
-        serverConfig: capturedServerConfig,
-        /** The upstream server never sees stripped names — a key that dropped
-         *  a redundant server-name prefix calls the ORIGINAL tool. */
-        toolName: serverToolName,
-        provider,
-        toolArguments,
-        options: {
+      const callMcp = (onRawResult, reservation) => {
+        if (reservation?.completed) return mcpResultForModel(reservation.raw);
+        return mcpManager.callTool({
+          serverName,
+          serverConfig: capturedServerConfig,
+          /** The upstream server never sees stripped names — a key that dropped
+           *  a redundant server-name prefix calls the ORIGINAL tool. */
+          toolName: serverToolName,
+          provider,
+          toolArguments,
+          options: { signal: derivedSignal },
+          user: effectiveUser,
+          requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
+          requestScopedConnections:
+            config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
+          customUserVars: effectiveUser?.provider === 'yai' ? undefined : customUserVars,
+          flowManager,
+          tokenMethods: {
+            findToken,
+            createToken,
+            updateToken,
+            deleteTokens,
+          },
+          oauthStart,
+          oauthEnd,
+          graphTokenResolver: getGraphApiToken,
+          oboTokenResolver: exchangeOboToken,
+          oboTrustChecker: createOboTrustChecker(),
+          onRawResult,
+        });
+      };
+
+      let result;
+      if (effectiveUser?.provider === 'yai') {
+        if (capturedServerConfig?.source === 'user')
+          throw new Error('YAI chat can only use administrator-configured MCP servers');
+        const binding = findYaiMcpBinding(yaiMcpConfig, serverName, serverToolName);
+        const yaiConfig = await getYaiMcpToolConfig(effectiveUser, derivedSignal);
+        const currentBinding = findYaiMcpBinding(yaiConfig, serverName, serverToolName);
+        if (
+          !binding ||
+          !currentBinding ||
+          binding.configurationRevision !== currentBinding.configurationRevision ||
+          binding.schemaRevision !== currentBinding.schemaRevision
+        )
+          throw new Error('MCP approval configuration changed; refresh the tool catalog');
+        const requestBody = config?.configurable?.requestBody ?? capturedRequestBody;
+        const { configServers: yaiConfigServers } = await resolveMcpServerContext({
+          user: effectiveUser,
+          body: requestBody,
+        });
+        const discovered = await mcpManager.discoverServerTools({
+          serverName,
+          user: effectiveUser,
+          configServers: yaiConfigServers,
+          requestBody,
           signal: derivedSignal,
-        },
-        user: effectiveUser,
-        requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
-        requestScopedConnections:
-          config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
-        customUserVars,
-        flowManager,
-        tokenMethods: {
-          findToken,
-          createToken,
-          updateToken,
-          deleteTokens,
-        },
-        oauthStart,
-        oauthEnd,
-        graphTokenResolver: getGraphApiToken,
-        oboTokenResolver: exchangeOboToken,
-        oboTrustChecker: createOboTrustChecker(),
-      });
+        });
+        const currentTool = discovered.tools?.find((entry) => entry.name === serverToolName);
+        if (!currentTool?.inputSchema || mcpSchemaRevision(currentTool.inputSchema) !== binding.schemaRevision)
+          throw new Error('MCP tool schema changed; refresh the approved tool catalog');
+        result = await callYaiMcpTool({
+          user: effectiveUser,
+          binding,
+          toolArguments,
+          runnableConfig: config,
+          signal: derivedSignal,
+          call: callMcp,
+        });
+      } else {
+        result = await callMcp();
+      }
 
       if (isAssistantsEndpoint(provider) && Array.isArray(result)) {
         return result[0];
@@ -1571,4 +1905,7 @@ module.exports = {
   checkOAuthFlowStatus,
   getServerConnectionStatus,
   createUnavailableToolStub,
+  getYaiMcpToolConfig,
+  findYaiMcpBinding,
+  createYaiKeenableSearchTool,
 };

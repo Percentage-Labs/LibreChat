@@ -1,6 +1,7 @@
 const mockRegistry = {
   ensureConfigServers: jest.fn(),
   getAllServerConfigs: jest.fn(),
+  getServerConfig: jest.fn(),
 };
 
 jest.mock('~/config', () => ({
@@ -89,7 +90,128 @@ const {
   resolveAllMcpConfigs,
   resolveMcpServerContext,
   resolveCollisionAuditNames,
+  createYaiKeenableSearchTool,
 } = require('../MCP');
+
+describe('Keenable search results', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(['text', 'json', 'error'])(
+    'handles %s search results with the user connection',
+    async (format) => {
+      const inputSchema = { properties: { query: { type: 'string' } } };
+      const binding = {
+        id: 'web_search',
+        serverName: 'keenable',
+        toolName: 'search_web_pages',
+        access: 'read',
+        configurationRevision: 'config',
+        schemaRevision: require('node:crypto')
+          .createHash('sha256')
+          .update(JSON.stringify(inputSchema))
+          .digest('hex'),
+      };
+      const configuration = { searchProvider: 'keenable', tools: [binding] };
+      const text = [
+        'Title: OpenAI\nURL: https://openai.com/\nPublished: 2026-09-23\nAcquired: 2026-09-28\nSnippets:\nResearch\n[...]\nNews',
+        'Title: Invalid\nURL: javascript:alert(1)\nSnippets:\nIgnore',
+      ].join('\n\n---\n\n');
+      const raw = {
+        content: [
+          {
+            type: 'text',
+            text:
+              format === 'text'
+                ? text
+                : JSON.stringify({
+                    results: [
+                      {
+                        title: 'OpenAI',
+                        url: 'https://openai.com/',
+                        snippet: 'Research\n[...]\nNews',
+                      },
+                    ],
+                  }),
+          },
+        ],
+      };
+      jest.replaceProperty(process, 'env', {
+        ...process.env,
+        YAI_API_BASE_URL: 'https://yai.invalid',
+        YAI_LIBRECHAT_SERVICE_KEY: 'fixture',
+      });
+      const emptyResponse = { ok: true, json: jest.fn() };
+      const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (url) =>
+        String(url).endsWith('/unknown')
+          ? emptyResponse
+          : {
+              ok: true,
+              json: async () =>
+                String(url).endsWith('/reserve')
+                  ? { callId: 'call', requestId: 'request' }
+                  : String(url).endsWith('/settle')
+                    ? { costUsd: '0.000000' }
+                    : configuration,
+            },
+      );
+      const serverConfig = { type: 'streamable-http', url: 'https://search.invalid/mcp' };
+      getAppConfig.mockResolvedValue({ mcpConfig: { keenable: serverConfig } });
+      mockRegistry.ensureConfigServers.mockResolvedValue({ keenable: serverConfig });
+      mockRegistry.getServerConfig.mockResolvedValue(serverConfig);
+      const manager = {
+        discoverServerTools: jest
+          .fn()
+          .mockResolvedValue({ tools: [{ name: binding.toolName, inputSchema }] }),
+        callTool: jest.fn().mockResolvedValue(raw),
+      };
+      require('~/config').getMCPManager.mockReturnValue(manager);
+      const user = { id: 'user', provider: 'yai', role: 'USER' };
+      const req = { body: { conversationId: 'conversation' } };
+      const onSearchResults = jest.fn();
+      const search = await createYaiKeenableSearchTool({
+        user,
+        req,
+        configuration,
+        onSearchResults,
+      });
+      if (format === 'error') {
+        manager.callTool.mockRejectedValue(new Error('Provider unavailable'));
+        await expect(search.invoke({ query: 'OpenAI official website' })).rejects.toThrow(
+          'Provider unavailable',
+        );
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://yai.invalid/integrations/librechat/tools/unknown',
+          expect.objectContaining({ body: JSON.stringify({ requestId: 'request' }) }),
+        );
+        expect(emptyResponse.json).not.toHaveBeenCalled();
+        return;
+      }
+      await expect(search.invoke({ query: 'OpenAI official website' })).resolves.toBe(
+        raw.content[0].text,
+      );
+      expect(manager.discoverServerTools).toHaveBeenCalledWith(expect.objectContaining({ user }));
+      expect(manager.callTool).toHaveBeenCalledWith(
+        expect.objectContaining({ user, requestBody: req.body }),
+      );
+      expect(onSearchResults).toHaveBeenCalledWith(
+        {
+          success: true,
+          data: {
+            organic: [
+              { title: 'OpenAI', link: 'https://openai.com/', snippet: 'Research\n[...]\nNews' },
+            ],
+            topStories: [],
+          },
+        },
+        expect.anything(),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://yai.invalid/integrations/librechat/tools/settle',
+        expect.objectContaining({ body: JSON.stringify({ callId: 'call', raw }) }),
+      );
+    },
+  );
+});
 
 describe('getAssistantToolDefinitions', () => {
   beforeEach(() => {

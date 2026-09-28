@@ -27,6 +27,10 @@ jest.mock('~/server/services/Tools/credentials', () => ({
   loadAuthValues: jest.fn(),
 }));
 
+jest.mock('~/server/services/MCP', () => ({
+  getYaiMcpToolConfig: jest.fn(),
+}));
+
 jest.mock('~/app/clients/tools/util', () => ({
   loadTools: jest.fn(),
 }));
@@ -47,7 +51,7 @@ const { verifyToolAuth } = require('../tools');
  * resurrect the per-user key-entry dialog on the client, which Phase 8
  * explicitly removed. Pin the contract.
  */
-describe('verifyToolAuth — execute_code system-auth contract', () => {
+describe('verifyToolAuth system-auth contracts', () => {
   const makeReq = (toolId) => ({
     params: { toolId },
     user: { id: 'user-1' },
@@ -78,6 +82,58 @@ describe('verifyToolAuth — execute_code system-auth contract', () => {
 
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({ message: 'Tool not found' });
+  });
+
+  it.each(['USER', 'ADMIN'])(
+    'authenticates YAI Keenable search for %s without a per-user API key',
+    async (role) => {
+      const { getYaiMcpToolConfig } = require('~/server/services/MCP');
+      const { loadWebSearchAuth } = require('@librechat/api');
+      getYaiMcpToolConfig.mockResolvedValue({
+        searchProvider: 'keenable',
+        tools: [{ id: Tools.web_search, access: 'read', billing: { type: 'free' } }],
+      });
+      const req = makeReq(Tools.web_search);
+      req.user = { ...req.user, provider: 'yai', role };
+      const res = makeRes();
+
+      await verifyToolAuth(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({ authenticated: true, authTypes: [] });
+      expect(getYaiMcpToolConfig).toHaveBeenCalledWith(req.user);
+      expect(loadWebSearchAuth).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not authenticate unconfigured YAI Keenable search', async () => {
+    const { getYaiMcpToolConfig } = require('~/server/services/MCP');
+    getYaiMcpToolConfig.mockResolvedValue({ searchProvider: 'keenable', tools: [] });
+    const req = makeReq(Tools.web_search);
+    req.user.provider = 'yai';
+    const res = makeRes();
+
+    await verifyToolAuth(req, res);
+
+    expect(res.json).toHaveBeenCalledWith({ authenticated: false, authTypes: [] });
+  });
+
+  it.each(['yai', 'local'])('preserves native search auth for %s with Tavily', async (provider) => {
+    const { getYaiMcpToolConfig } = require('~/server/services/MCP');
+    const { loadWebSearchAuth } = require('@librechat/api');
+    getYaiMcpToolConfig.mockResolvedValue({ searchProvider: 'tavily', tools: [] });
+    loadWebSearchAuth.mockResolvedValue({ authenticated: false, authTypes: ['tavilyApiKey'] });
+    const req = makeReq(Tools.web_search);
+    req.user.provider = provider;
+    const res = makeRes();
+
+    await verifyToolAuth(req, res);
+
+    expect(loadWebSearchAuth).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      authenticated: false,
+      authTypes: ['tavilyApiKey'],
+    });
+    if (provider === 'local') expect(getYaiMcpToolConfig).not.toHaveBeenCalled();
   });
 
   it('does NOT invoke loadAuthValues for execute_code (no per-user credential check)', async () => {

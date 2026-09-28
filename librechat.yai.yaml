@@ -42,6 +42,19 @@ webSearch:
   rerankerType: none
   tavilyApiKey: '${TAVILY_API_KEY}'
 
+mcpServers:
+  keenable:
+    type: streamable-http
+    url: https://api.keenable.ai/mcp
+    startup: false
+    chatMenu: false
+    headers:
+      X-API-Key: '${KEENABLE_API_KEY}'
+
+mcpSettings:
+  allowedDomains:
+    - api.keenable.ai
+
 endpoints:
   agents:
     disableBuilder: true

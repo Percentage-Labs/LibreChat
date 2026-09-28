@@ -141,11 +141,16 @@ const {
   isEphemeralAgentId,
   removeNullishValues,
   DEFAULT_MEMORY_MAX_INPUT_TOKENS,
+  normalizeServerName,
 } = require('librechat-data-provider');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
 const { createContextHandlers } = require('~/app/clients/prompts');
-const { resolveConfigServers, getAccessibleMcpServerNames } = require('~/server/services/MCP');
+const {
+  resolveConfigServers,
+  getAccessibleMcpServerNames,
+  getYaiMcpToolConfig,
+} = require('~/server/services/MCP');
 const { getMCPServerTools } = require('~/server/services/Config');
 const BaseClient = require('~/app/clients/BaseClient');
 const { getMCPManager } = require('~/config');
@@ -164,6 +169,53 @@ function getInterruptTtlMs(checkpointerCfg, req) {
     return configuredTtlMs;
   }
   return Math.min(configuredTtlMs, Math.max(0, bindingDeadline - Date.now()));
+}
+
+function toolNameMatches(pattern, name) {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(name);
+}
+
+async function appConfigWithYaiWriteApproval(appConfig, req, agents = []) {
+  if (req?.user?.provider !== 'yai') return appConfig;
+  const yaiTools = await getYaiMcpToolConfig(req.user);
+  const selected = new Set(agents.flatMap((agent) => agent?.tools ?? []));
+  const writeTools = yaiTools.tools.filter((binding) =>
+    binding.access === 'write' &&
+    selected.has(
+      `${binding.toolName}${Constants.mcp_delimiter}${normalizeServerName(binding.serverName)}`,
+    ),
+  );
+  if (writeTools.length === 0) return appConfig;
+
+  const endpointName = EModelEndpoint.agents;
+  const endpoint = appConfig.endpoints?.[endpointName] ?? {};
+  if (!(await getAgentCheckpointer(endpoint.checkpointer)))
+    throw new Error('YAI external writes require a durable LibreChat checkpoint store');
+
+  const names = writeTools.map(
+    (binding) => `${binding.toolName}${Constants.mcp_delimiter}${normalizeServerName(binding.serverName)}`,
+  );
+  const policy = endpoint.toolApproval ?? {};
+  const allow = (policy.allow ?? []).filter(
+    (pattern) => !names.some((name) => toolNameMatches(pattern, name)),
+  );
+  return {
+    ...appConfig,
+    endpoints: {
+      ...appConfig.endpoints,
+      [endpointName]: {
+        ...endpoint,
+        toolApproval: {
+          ...policy,
+          enabled: true,
+          mode: 'default',
+          allow,
+          ask: [...new Set([...(policy.ask ?? []), ...names])],
+        },
+      },
+    },
+  };
 }
 
 const MEMORY_INPUT_CHARS_PER_TOKEN = 8;
@@ -3285,8 +3337,12 @@ class AgentClient extends BaseClient {
         agents: [this.options.agent, ...(this.agentConfigs?.values() ?? [])],
       });
 
+      const runAppConfig = await appConfigWithYaiWriteApproval(appConfig, this.options.req, [
+        this.options.agent,
+        ...(this.agentConfigs?.values() ?? []),
+      ]);
       /** @type {AppConfig['endpoints']['agents']} */
-      const agentsEConfig = appConfig.endpoints?.[EModelEndpoint.agents];
+      const agentsEConfig = runAppConfig.endpoints?.[EModelEndpoint.agents];
 
       config = {
         runName: 'AgentRun',
@@ -3626,8 +3682,8 @@ class AgentClient extends BaseClient {
           requestBody: config.configurable.requestBody,
           user: createSafeUser(this.options.req?.user),
           tenantId: this.options.req?.user?.tenantId,
-          summarizationConfig: appConfig?.summarization,
-          appConfig,
+          summarizationConfig: runAppConfig?.summarization,
+          appConfig: runAppConfig,
           tokenCounter,
           /** Bills subagent child-run model calls — foreground usage joins
            *  the parent batch, while detached usage is recorded per call and
@@ -3920,8 +3976,9 @@ class AgentClient extends BaseClient {
         abortController = new AbortController();
       }
 
+      const runAppConfig = await appConfigWithYaiWriteApproval(appConfig, this.options.req, agents);
       /** @type {AppConfig['endpoints']['agents']} */
-      const agentsEConfig = appConfig.endpoints?.[EModelEndpoint.agents];
+      const agentsEConfig = runAppConfig.endpoints?.[EModelEndpoint.agents];
 
       BaseClient.prototype.setModelBoundStoredMessages.call(
         this,
@@ -4105,8 +4162,8 @@ class AgentClient extends BaseClient {
         requestBody: config.configurable.requestBody,
         user: createSafeUser(this.options.req?.user),
         tenantId: this.options.req?.user?.tenantId,
-        summarizationConfig: appConfig?.summarization,
-        appConfig,
+        summarizationConfig: runAppConfig?.summarization,
+        appConfig: runAppConfig,
         tokenCounter,
         subagentUsageSink: createSubagentUsageSink(
           this.collectedUsage,
